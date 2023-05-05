@@ -104,10 +104,6 @@ plot_count_ensemble.mod <- function (count_ensemble, times, use_ggplot2 = FALSE,
 SARD.df <- read.csv("SARD_Mar2021_14C.txt")
 
 SARD.df |>
-  ggplot()+
-  geom_point(aes(x = DecdegE, y = DecdegS, group=as.factor(Biome), col=Biome))
-
-SARD.df |>
   rename(site = X.Site,
          c14age = Date,
          c14std = Uncertainty,
@@ -119,23 +115,10 @@ SARD.df |>
 ##########################
 
 my_map.df <- SARD.df |> dplyr::filter(!is.na(DecdegE))
-my_map <- get_map(
-  location = c(left = min(my_map.df$DecdegE)+1,
-               bottom = min(my_map.df$DecdegS)+1,
-               right = max(my_map.df$DecdegE)+1,
-               top = max(my_map.df$DecdegS))-3,
-  source = "stamen"
-)
 
 sard.map <- SARD.df |>
   mutate(Date = as.numeric(Date)) |>
   filter(Date < 12000 & Date > 4000)
-
-ggmap(my_map)+
-  geom_point(data=sard.map,
-             aes(x = DecdegE, y = DecdegS))+
-  geom_point(data=sard.map[which(sard.map$Archaeological.Sub.chronology=="Wilton"|
-                                 sard.map$Archaeological.Sub.chronology=="Oakhurst"),],aes(x = DecdegE, y = DecdegS, col=Archaeological.Sub.chronology))
 
 sard.map |>
   group_by(Archaeological.Sub.chronology, X.Site) |>
