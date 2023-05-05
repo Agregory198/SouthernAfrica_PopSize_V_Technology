@@ -1,0 +1,725 @@
+---
+title: "Population size Versus the frequency of Oakhurst and Wilton technology"
+author: "Alex Gregory"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(chronup)
+library(rstanarm)
+library(bayesrules)
+library(bayesplot)
+library(tidyverse)
+library(tidybayes)
+library(broom.mixed)
+
+
+library(nimble)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(chronup)
+library(abind)
+library(clam)
+library(pastclim)
+library(tibble)
+library(c14bazAAR)
+library(MCMCvis)
+library(chronup)
+library(rcarbon)
+# Map
+library(tmap)
+library(ggmap)
+library(raster)
+library(broom)
+# Parallel
+library(foreach)
+library(doParallel)
+# Bayes
+library(bayesrules)
+library(bayesplot)
+library(tidyverse)
+library(tidybayes)
+library(broom.mixed)
+library(rstanarm)
+```
+
+```{r}
+plot_count_ensemble.mod <- function (count_ensemble, times, use_ggplot2 = FALSE, axis_x_res = 100, 
+    axis_y_res = 1) 
+{
+    nevents <- sum(count_ensemble[, 1])
+    event_count_freqs <- t(apply(count_ensemble, 1, chronup::tabulate_freqs, 
+        nevents = nevents))
+    max_count <- chronup::find_max_count(event_count_freqs)
+    event_count_freqs_na <- event_count_freqs
+    event_count_freqs_na[which(event_count_freqs_na == 0)] <- NA
+    event_count_freqs_na <- event_count_freqs_na[, 2:max_count]
+    if (use_ggplot2) {
+        ggplot2_installed <- requireNamespace("ggplot2", quietly = TRUE)
+        if (ggplot2_installed) {
+            ncols <- dim(event_count_freqs_na)[2]
+            event_count_freqs_df <- as.data.frame(cbind(times, 
+                event_count_freqs_na))
+            colnames <- c("x", as.character(1:ncols))
+            names(event_count_freqs_df) <- colnames
+            event_count_freqs_df_long <- tidyr::pivot_longer(event_count_freqs_df, 
+                cols = 2:ncols, names_to = "y", values_to = "frequency")
+            p <- ggplot2::ggplot(data = event_count_freqs_df_long, 
+                mapping = ggplot2::aes(x = .data$x, y = .data$y)) + 
+                ggplot2::geom_raster(mapping = ggplot2::aes(fill = frequency)) + 
+                ggplot2::scale_fill_viridis_c(option = "B", na.value = grDevices::rgb(0, 
+                  0, 0, 0), begin = 0.15, alpha = 0.9, trans = "log") + 
+                ggplot2::labs(x = "Time", y = "Count") + # remove legend+
+            scale_x_reverse() +
+              theme_bw() + theme(panel.border = element_blank(),
+                                 panel.grid.major = element_blank(),
+                                 panel.grid.minor = element_blank(),
+                                 legend.position = "none",
+                                 text = element_text(size = 20))# reverse x-axis
+            print(p)
+            return(p)
+        }
+        else {
+            stop("ggplot2 not installed.")
+        }
+    }
+    else {
+        image(x = 1:dim(event_count_freqs_na)[1], y = 1:dim(event_count_freqs_na)[2], 
+            z = event_count_freqs_na, useRaster = T, col = grDevices::hcl.colors(n = 10, 
+                palette = "viridis", alpha = 0.9), axes = FALSE, 
+            xlab = "Time", ylab = "Count")
+        axis_y_at <- seq(1, dim(event_count_freqs_na)[2], axis_y_res)
+        axis_x_at <- seq(1, dim(event_count_freqs_na)[1], axis_x_res)
+        axis(1, at = axis_x_at, labels = times[axis_x_at])
+        axis(2, at = axis_y_at)
+    }
+    return()
+}
+```
+
+```{r}
+SARD.df <- read.csv("SARD_Mar2021_14C.txt")
+
+SARD.df |>
+  ggplot()+
+  geom_point(aes(x = DecdegE, y = DecdegS, group=as.factor(Biome), col=Biome))
+
+SARD.df |>
+  rename(site = X.Site,
+         c14age = Date,
+         c14std = Uncertainty,
+         culture = Archaeological.Sub.chronology,
+         lat = DecdegS,
+         lon = DecdegE) |>
+  mutate_at(c("c14age", "c14std"), as.numeric) -> SARD
+
+##########################
+
+my_map.df <- SARD.df |> dplyr::filter(!is.na(DecdegE))
+my_map <- get_map(
+  location = c(left = min(my_map.df$DecdegE)+1,
+               bottom = min(my_map.df$DecdegS)+1,
+               right = max(my_map.df$DecdegE)+1,
+               top = max(my_map.df$DecdegS))-3,
+  source = "stamen"
+)
+
+sard.map <- SARD.df |>
+  mutate(Date = as.numeric(Date)) |>
+  filter(Date < 12000 & Date > 4000)
+
+ggmap(my_map)+
+  geom_point(data=sard.map,
+             aes(x = DecdegE, y = DecdegS))+
+  geom_point(data=sard.map[which(sard.map$Archaeological.Sub.chronology=="Wilton"|
+                                 sard.map$Archaeological.Sub.chronology=="Oakhurst"),],aes(x = DecdegE, y = DecdegS, col=Archaeological.Sub.chronology))
+
+sard.map |>
+  group_by(Archaeological.Sub.chronology, X.Site) |>
+  summarize(n()) |>
+  summarize(sum.witlon = sum(Archaeological.Sub.chronology=="Wilton"),
+            sum.oak = sum(Archaeological.Sub.chronology=="Oakhurst"),
+            sum.un = sum(Archaeological.Sub.chronology==""),
+            sum.r = sum(Archaeological.Sub.chronology=="Robberg"),
+            sum.lsa = sum(Archaeological.Sub.chronology=="Final LSA"))
+
+sard.map |> dplyr::select(X.Site, DecdegS, DecdegE, 
+                          Country, Biome,
+                          Date, Uncertainty, 
+                          Archaeological.Sub.chronology) |>
+  rename(site = X.Site, lat = DecdegS, lon = DecdegE,
+         `Technological Complex` = Archaeological.Sub.chronology)-> SARD.out
+write.csv(SARD.out, "Radiocarbon_data_uncalib.csv", sep = ",")
+```
+
+# Figure 2: Example Summed Distribution
+
+```{r}
+df.sard[which(df.sard$culture=="Oakhurst" & df.sard$c14age <11000 & df.sard$c14age >10000),"site"]
+
+df.sard <- as.c14_date_list(SARD) |>
+  rename(labnr = Lab.ID) |>
+  filter(is.na(c14age)==FALSE &
+          is.na(c14std)==FALSE) |>
+  filter(site == "Elands Bay Cave") |>
+  c14bazAAR::remove_duplicates()
+dens1.cal <- rcarbon::calibrate(x=df.sard$c14age, errors=df.sard$c14std)
+
+# plot individual dates for elands bay cave
+multiplot(subset(dens1.cal, BP<11000&BP>9000, p=0.01), label=F)
+
+# plot cumulative sum distribution
+DK.spd = spd(dens1.cal,timeRange=c(12000,9000))
+plot(DK.spd)
+
+
+
+```
+
+# Figure 3: Example Datatset for Process and REC
+
+```{r}
+samp.int <- 2000
+samp.times <- 10000:8001
+samp.beta <- 0.04
+samp.process <- sqrt(samp.beta*(1:samp.int))
+samp.nevents <- 500
+
+samp.nsamples <- 20000
+samp.sim_sequences <- simulate_event_counts(process = samp.process,
+                            times = samp.times,
+                            nevents = samp.nevents,
+                            nsamples = samp.nsamples,
+                            parallel = T)
+
+
+
+plot(y = samp.process,
+    x = samp.times,
+    type = "l",
+    xlim = c(samp.times[1], samp.times[length(samp.times)]),
+    xlab = "Time",
+    ylab = "Process Level")
+
+
+
+plot(y = samp.sim_sequences$counts$Count,
+    x = samp.sim_sequences$counts$Timestamps,
+    type = "h",
+    xlim = c(samp.times[1], samp.times[length(samp.times)]),
+    xlab = "Time",
+    ylab = "Count")
+grid()
+
+
+plot_count_ensemble.mod(count_ensemble = samp.sim_sequences$count_ensemble,
+                    times = (samp.sim_sequences$new_times),
+                    use_ggplot2 = T)
+```
+
+# Figure 4: RECE for 12-4 ka cal. BP (radiocarbon)
+
+```{r}
+nintervals <- 1000
+times <- 12000:4000
+
+
+df.sard <- as.c14_date_list(SARD) |>
+  rename(labnr = Lab.ID) |>
+  filter(is.na(c14age)==FALSE &
+          is.na(c14std)==FALSE) |>
+  filter(c14age < max(times) & c14age > min(times)) |>
+  c14bazAAR::remove_duplicates()
+dens1.cal <- rcarbon::calibrate(x=df.sard$c14age, errors=df.sard$c14std)
+
+DK.spd = spd(dens1.cal,timeRange=c(max(times),min(times)))
+
+emedyd.spd=stackspd(x=dens1.cal,
+                    group=df.sard$Biome,
+                    timeRange=c(12000,4000),
+                    runm=50,verbos=FALSE)
+
+
+nevents <- 500
+nsamples <- 10000
+sim_SA.a <- simulate_event_counts(process = DK.spd$grid$PrDens,
+                            times = times,
+                            nevents = nevents,
+                            nsamples = nsamples,
+                            parallel = T)
+
+# Plot the process
+plot(y = DK.spd$grid$PrDens,
+    x = times,
+    type = "l",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Process Level")
+
+plot_rece(as.matrix(df.sard[which(df.sard$c14age<12000),c(2:3)]),nsamples = 1000)
+
+##########################
+plot(y = sim_SA.a$counts$Count,
+    x = sim_SA.a$counts$Timestamps,
+    type = "h",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Count")
+
+plot_count_ensemble.mod(count_ensemble = sim_SA.a$count_ensemble,
+                    times = sim_SA.a$new_times,
+                    use_ggplot2 = T)
+
+```
+
+# Figure 5
+
+## A: Radiocarbon
+
+```{r}
+nintervals <- 1000
+times <- 12000:8000
+
+
+df.sard <- as.c14_date_list(SARD) |>
+  rename(labnr = Lab.ID) |>
+  filter(is.na(c14age)==FALSE &
+          is.na(c14std)==FALSE) |>
+  filter(c14age < max(times) & c14age > min(times)) |>
+  c14bazAAR::remove_duplicates()
+dens1.cal <- rcarbon::calibrate(x=df.sard$c14age, errors=df.sard$c14std)
+
+DK.spd = spd(dens1.cal,timeRange=c(max(times),min(times)))
+
+
+nevents <- 500
+nsamples <- 10000
+sim_SA <- simulate_event_counts(process = DK.spd$grid$PrDens,
+                            times = times,
+                            nevents = nevents,
+                            nsamples = nsamples,
+                            parallel = T)
+
+# Plot the process
+plot(y = DK.spd$grid$PrDens,
+    x = times,
+    type = "l",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Process Level")
+
+##########################
+plot(y = sim_SA$counts$Count,
+    x = sim_SA$counts$Timestamps,
+    type = "h",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Count")
+
+plot_count_ensemble.mod(count_ensemble = sim_SA$count_ensemble,
+                    times = sim_SA$new_times,
+                    use_ggplot2 = T)
+
+```
+
+## B: Oakhurst Technology
+
+#### Create the process that defines the frequency of Oakhurst technology
+
+```{r}
+culture_0 = "Oakhurst"
+# Define which of the above segments of South Africa
+region <- as.c14_date_list(SARD)
+
+# Define cultures based on calibrated data
+SA.cal.cult <- region |>
+  dplyr::filter(c14age < max(times) &
+                  c14age > min(times)) |>
+  c14bazAAR::calibrate()
+
+# I need to loop thrugh calibrated dates
+## In calrange, if within date_range_SA 'AND' Oakhurst, 1; else, 0
+### Store in matrix, for all dates from date_range_SA
+#### Add rowwise at end, +1 if overlaps
+
+
+# Assign dataframe to store dates and names (1 or a 0)
+culture.df <- as.data.frame(matrix(nrow=length(0:18000),
+                                  ncol=
+                                    length(unique(region$site))))
+
+# Assign date values to data frame
+# Standardize so I can index data frame by time period
+culture.df[,1] <- seq(0:18000)
+
+for(i in 1:dim(SA.cal.cult)[1]){
+  culture1 <- SA.cal.cult[i,"culture"]
+  if(culture1 == culture_0){
+    culture.df[c(seq(min(SA.cal.cult$calrange[[i]]$from),
+            max(SA.cal.cult$calrange[[i]]$to),
+            1)),
+            i+1] <- 1
+  } else {
+    culture.df[c(seq(min(SA.cal.cult$calrange[[i]]$from),
+            max(SA.cal.cult$calrange[[i]]$to),
+            1)),
+            i+1] <- 0
+  }
+}
+
+# COnvert all NA to 0 since this is not recorded as culture period
+culture.df[is.na(culture.df)] <- 0
+
+x3 <- rowSums(culture.df[,-1])
+plot(x = 0:18000,
+     y = x3,
+     type="l")
+```
+
+#### Apply the process to *chronup* to create RECE
+
+```{r}
+nintervals <- 1000
+times <- 12000:8000
+
+process <- x3[12000:8000]
+nevents <- 500
+nsamples <- 10000
+sim_nast <- simulate_event_counts(process = process,
+                            times = times,
+                            nevents = nevents,
+                            nsamples = nsamples,
+                            parallel = T)
+
+
+# Plot the process
+plot(y = x3[12000:8000],
+    x = times,
+    type = "l",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Process Level")
+
+
+
+###############################
+plot(y = sim_nast$counts$Count,
+    x = sim_nast$counts$Timestamps,
+    type = "h",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Count")
+
+plot_count_ensemble.mod(count_ensemble = sim_nast$count_ensemble,
+                    times = sim_nast$new_times,
+                    use_ggplot2 = T)
+```
+
+# Figure 6: Posterior Distribution
+
+```{r}
+max_time <- min(max(sim_nast$new_times), max(sim_SA$new_times))
+min_time <- max(min(sim_nast$new_times), min(sim_SA$new_times))
+
+nsamples <- 10000
+
+Y <- sim_nast$count_ensemble[which(sim_nast$new_times<max_time &
+                                      sim_nast$new_times>min_time),]
+x1 <- sim_SA$count_ensemble[which(sim_SA$new_times<max_time &
+                                      sim_SA$new_times>min_time),]
+
+n <- dim(Y)[1]
+x0 <- rep(1, n)
+
+# compile covariate with intercept and all x1 generations
+X <- matrix(nrow = n, ncol = nsamples*2)
+x1.c <- 1
+for(i in 1:20000){
+  if(i %% 2 != 0) {
+    X[,i] <- x0
+  } else {
+    X[,i] <- x1[,x1.c]
+    x1.c <- x1.c + 1
+  }
+}
+```
+
+```{r}
+set.seed(1234)
+startvals <- c(0,0)
+startscales <- c(0.1, 0.002)
+
+#startvals <- c(0,0,rep(.4, nrow(Y)))
+#startscales <- c(rep(0.1, length(startvals)))
+
+mcmc_samples_adapt <- regress(Y = Y,
+                            X = X,
+                            model = "pois",
+                            startvals = startvals,
+                            scales = startscales,
+                            adapt = T)
+
+burnin <- floor(dim(mcmc_samples_adapt$samples)[1] * 0.1)
+indeces <- seq(burnin, dim(mcmc_samples_adapt$samples)[1], 1)
+new_startvals <- colMeans(mcmc_samples_adapt$samples[indeces,])
+
+burnin <- floor(dim(mcmc_samples_adapt$scales)[1] * 0.1)
+indeces <- seq(burnin, dim(mcmc_samples_adapt$scales)[1], 1)
+new_startscales <- colMeans(mcmc_samples_adapt$scales[indeces,])
+
+# Compute model with adjusted parameters
+mcmc_samples <- regress(Y = Y,
+                        X = X,
+                        model = "pois",
+                        startvals = new_startvals,
+                        scales = new_startscales,
+                        adapt = F)
+
+head(mcmc_samples)
+
+plot(mcmc_samples[, 2], type = "l")
+
+# Create plot for posterior distribution outlining 85% credible interval
+quant.1 <- quantile(mcmc_samples[,2], probs = c(0.075, 0.5, 0.925))
+plot(density(mcmc_samples[, 2]),
+     xlab = "Posterior Estimate")
+abline(v = quant.1[1], col = "red")
+abline(v = quant.1[3], col = "red")
+abline(v = quant.1[2], col = "blue")
+
+# Test probability that posterior estimate is greater than 0
+as.data.frame(mcmc_samples[,2]) |>
+  dplyr::summarize(prob_greater_0 = mean(mcmc_samples[,2] > 0))
+
+```
+
+# Figure 7
+
+## A: Radiocarbon
+
+```{r}
+nintervals <- 1000
+times <- 8000:4000
+
+
+df.sard <- as.c14_date_list(SARD) |>
+  rename(labnr = Lab.ID) |>
+  filter(is.na(c14age)==FALSE &
+          is.na(c14std)==FALSE) |>
+  filter(c14age < max(times) & c14age > min(times)) |>
+  c14bazAAR::remove_duplicates()
+
+dens1.cal <- rcarbon::calibrate(x=df.sard$c14age, errors=df.sard$c14std)
+
+
+DK.spd = spd(dens1.cal,timeRange=c(max(times),min(times)))
+
+
+nevents <- 500
+nsamples <- 10000
+sim_SA <- simulate_event_counts(process = DK.spd$grid$PrDens,
+                            times = times,
+                            nevents = nevents,
+                            nsamples = nsamples,
+                            parallel = T)
+
+
+
+# Plot the process
+plot(y = DK.spd$grid$PrDens,
+    x = times,
+    type = "l",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Process Level")
+
+
+##########################
+plot(y = sim_SA$counts$Count,
+    x = sim_SA$counts$Timestamps,
+    type = "h",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Count")
+
+plot_count_ensemble.mod(count_ensemble = sim_SA$count_ensemble,
+                    times = sim_SA$new_times,
+                    use_ggplot2 = T)
+
+```
+
+## B: Wilton Technology
+
+#### Create the process that defines the frequency of Wilton technology
+
+```{r}
+culture_0 = "Wilton"
+# Define which of the above segments of South Africa
+region <- as.c14_date_list(SARD)
+
+# Define cultures based on calibrated data
+SA.cal.cult <- region |>
+  dplyr::filter(c14age < max(times) &
+                  c14age > min(times)) |>
+  c14bazAAR::calibrate()
+
+# I need to loop thrugh calibrated dates
+## In calrange, if within date_range_SA 'AND' Oakhurst, 1; else, 0
+### Store in matrix, for all dates from date_range_SA
+#### Add rowwise at end, +1 if overlaps
+
+
+# Assign dataframe to store dates and names (1 or a 0)
+culture.df <- as.data.frame(matrix(nrow=length(0:18000),
+                                  ncol=
+                                    length(unique(region$site))))
+
+# Assign date values to data frame
+# Standardize so I can index data frame by time period
+culture.df[,1] <- seq(0:18000)
+
+for(i in 1:dim(SA.cal.cult)[1]){
+  culture1 <- SA.cal.cult[i,"culture"]
+  if(culture1 == culture_0){
+    culture.df[c(seq(min(SA.cal.cult$calrange[[i]]$from),
+            max(SA.cal.cult$calrange[[i]]$to),
+            1)),
+            i+1] <- 1
+  } else {
+    culture.df[c(seq(min(SA.cal.cult$calrange[[i]]$from),
+            max(SA.cal.cult$calrange[[i]]$to),
+            1)),
+            i+1] <- 0
+  }
+}
+
+# Convert all NA to 0 since this is not recorded as culture period
+culture.df[is.na(culture.df)] <- 0
+
+x3 <- rowSums(culture.df[,-1])
+plot(x = 0:18000,
+     y = x3,
+     type="l")
+```
+
+#### Apply the process to *chronup* to create RECE
+
+```{r}
+nintervals <- 1000
+times <- 8000:4000
+
+process <- x3[8000:4000]
+nevents <- 500
+nsamples <- 10000
+sim_nast <- simulate_event_counts(process = process,
+                            times = times,
+                            nevents = nevents,
+                            nsamples = nsamples,
+                            parallel = T)
+
+
+
+# Plot the process
+plot(y = x3[8000:4000],
+    x = times,
+    type = "l",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Process Level")
+
+
+
+###############################
+plot(y = sim_nast$counts$Count,
+    x = sim_nast$counts$Timestamps,
+    type = "h",
+    xlim = c(times[1], times[length(times)]),
+    xlab = "Time",
+    ylab = "Count")
+
+plot_count_ensemble.mod(count_ensemble = sim_nast$count_ensemble,
+                    times = sim_nast$new_times,
+                    use_ggplot2 = T)
+```
+
+# Figure 8: Posterior DIstribution
+
+```{r}
+max_time <- 8000
+min_time <- 4000
+
+max_time <- min(max(sim_nast$new_times), max(sim_SA$new_times))
+min_time <- max(min(sim_nast$new_times), min(sim_SA$new_times))
+
+nsamples <- 10000
+
+
+Y <- sim_nast$count_ensemble[which(sim_nast$new_times<max_time &
+                                      sim_nast$new_times>min_time),]
+x1 <- sim_SA$count_ensemble[which(sim_SA$new_times<max_time &
+                                      sim_SA$new_times>min_time),]
+
+n <- dim(Y)[1]
+x0 <- rep(1, n)
+
+# compile covariate with intercept and all x1 generations
+X <- matrix(nrow = n, ncol = nsamples*2)
+x1.c <- 1
+for(i in 1:20000){
+  if(i %% 2 != 0) {
+    X[,i] <- x0
+  } else {
+    X[,i] <- x1[,x1.c]
+    x1.c <- x1.c + 1
+  }
+}
+
+```
+
+```{r}
+set.seed(12345)
+startvals <- c(0,0)
+startscales <- c(0.1, 0.002)
+
+mcmc_samples_adapt <- regress(Y = Y,
+                            X = X,
+                            model = "pois",
+                            startvals = startvals,
+                            scales = startscales,
+                            adapt = T)
+
+burnin <- floor(dim(mcmc_samples_adapt$samples)[1] * 0.1)
+indeces <- seq(burnin, dim(mcmc_samples_adapt$samples)[1], 1)
+new_startvals <- colMeans(mcmc_samples_adapt$samples[indeces,])
+
+burnin <- floor(dim(mcmc_samples_adapt$scales)[1] * 0.1)
+indeces <- seq(burnin, dim(mcmc_samples_adapt$scales)[1], 1)
+new_startscales <- colMeans(mcmc_samples_adapt$scales[indeces,])
+
+mcmc_samples <- regress(Y = Y,
+                        X = X,
+                        model = "pois",
+                        startvals = new_startvals,
+                        scales = new_startscales,
+                        adapt = F)
+
+head(mcmc_samples)
+
+plot(mcmc_samples[, 2], type = "l")
+
+quant.1 <- quantile(mcmc_samples[,2], probs = c(0.075, 0.5, 0.925))
+plot(density(mcmc_samples[, 2]),
+     xlab = "Posterior Estimate")
+abline(v = quant.1[1], col = "red")
+abline(v = quant.1[3], col = "red")
+abline(v = quant.1[2], col = "blue")
+
+# Test probability that it lies above 0
+as.data.frame(mcmc_samples[,2]) |>
+  dplyr::summarize(prob_greater_0 = mean(mcmc_samples[,2] > 0))
+```
+
+# 
